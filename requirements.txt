@@ -1,0 +1,4 @@
+r-shiny
+r-colourpicker
+r-DT
+bioconductor-rtracklayer
