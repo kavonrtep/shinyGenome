@@ -67,6 +67,14 @@ ui <- fluidPage(
       br(),
       dataTableOutput("uploaded_files_table"),
       actionButton("submit_selected", "Show only selected data"),
+    ),
+    wellPanel(
+      # specify bandwith - integer value in bp from 1000 to 100000000
+      # default is 1000000
+      numericInput("bandwidth", "Enter the bandwidth for density plot", value = 1000000, min = 1000, max = 100000000),
+      # contrast for alpha channel calculation
+      numericInput("contrast", "Enter the contrast for alpha channel calculation", value = 2, min = 1, max = 10),
+      actionButton("submit_bandwidth", "Update Bandwidth/Contrast")
     )
            ),
     column(10,
@@ -99,6 +107,11 @@ server <- function(input, output) {
 
   df <- reactiveValues(
     df = NULL
+  )
+
+  plot_params <- reactiveValues(
+    bandwidth = 1000000,
+    contrast = 2
   )
 
 
@@ -140,20 +153,21 @@ server <- function(input, output) {
     print(input$file2$datapath)
     g <- import(input$file2$datapath)
 
-    uploaded_data$gff_list[[input$file2_label]] <- g
 
 
     g <- keepSeqlevels(g, names(uploaded_data$chrom_sizes)[names(uploaded_data$chrom_sizes) %in% seqlevels(g)], pruning.mode='coarse')
     missing_seqlevels <- names(uploaded_data$chrom_sizes)[!names(uploaded_data$chrom_sizes) %in% seqlevels(g)]
     seqlevels(g) <- c(seqlevels(g), missing_seqlevels)
-    d <- get_density(g, uploaded_data$chrom_sizes[seqlevels(g)])
+    n = length(uploaded_data$gff_list) + 1
+    uploaded_data$gff_list[n] <- g
+    d <- get_density(g, uploaded_data$chrom_sizes[seqlevels(g)], tw = plot_params$bandwidth)
     # remove zero coverage
     d <- d[d$coverage > 0,]
     dd <- data.frame(seqnames = seqnames(d), start = start(d),
                      end = end(d),
                      value = d$coverage,
                      stringsAsFactors = FALSE,
-                     alpha = numToHex(d$coverage^(1/2)),
+                     alpha = numToHex(d$coverage^(1/plot_params$contrast)),
                      chr_index = match(seqnames(d),names(uploaded_data$chrom_sizes))
     )
     n <- length(uploaded_data$density_list) + 1
@@ -178,8 +192,6 @@ server <- function(input, output) {
           border = NA)
       }
 
-
-
     })
 
 
@@ -203,11 +215,34 @@ server <- function(input, output) {
     print(uploaded_files_info$data)
   })
 
+
+  observeEvent(input$submit_bandwidth, {
+    req(input$bandwidth)
+    req(input$contrast)
+    plot_params$bandwidth <- input$bandwidth
+    plot_params$contrast <- input$contrast
+    # update data for ploting
+    print('update data for ploting')
+    for (i in seq_along(uploaded_data$density_list)){
+      print(i)
+      g <- uploaded_data$gff_list[[i]]
+      d <- get_density(g, uploaded_data$chrom_sizes[seqlevels(g)], tw = plot_params$bandwidth)
+      # remove zero coverage
+      d <- d[d$coverage > 0,]
+      dd <- data.frame(seqnames = seqnames(d), start = start(d),
+                       end = end(d),
+                       value = d$coverage,
+                       stringsAsFactors = FALSE,
+                       alpha = numToHex(d$coverage^(1/plot_params$contrast)),
+                       chr_index = match(seqnames(d),names(uploaded_data$chrom_sizes))
+      )
+      uploaded_data$density_list[[i]] <- dd
+    }
+  })
+
   output$uploaded_files_table <- renderDataTable({
     uploaded_files_info$data
   }, editable = TRUE)
-
-
 }
 
 
