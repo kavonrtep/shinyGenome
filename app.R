@@ -4,7 +4,7 @@ library(colourpicker)
 library(DT)
 library(rtracklayer)
 
-get_density <- function(x, chr_size=NULL, tw=100000){
+get_density <- function(x, chr_size=NULL, tw=1000000){
   cvg <- coverage(x)
   bins <- tileGenome(chr_size, tilewidth = tw)
   d <- binnedAverage(unlist(bins), cvg, "coverage")
@@ -153,7 +153,7 @@ server <- function(input, output) {
                      end = end(d),
                      value = d$coverage,
                      stringsAsFactors = FALSE,
-                     alpha = numToHex(d$coverage^(1/5)),
+                     alpha = numToHex(d$coverage^(1/2)),
                      chr_index = match(seqnames(d),names(uploaded_data$chrom_sizes))
     )
     n <- length(uploaded_data$density_list) + 1
