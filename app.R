@@ -30,11 +30,18 @@ numToHex <- function(num) {
 
 # Define UI for data upload app ----
 ui <- fluidPage(
+   tags$head(
+    tags$style(HTML("
+      .container-lg, .container-md, .container-sm, .container-xl {
+        max-width: 100%;
+      }
+    "))
+  ),
   # App title ----
   titlePanel("Choose Genome Data:"),
   # Sidebar layout with input and output definitions
   fluidRow(
-    column(2,
+    column(3,
       wellPanel(
       # Input: Select a file ----
       fileInput("file1", "Choose Genome File",
@@ -60,6 +67,9 @@ ui <- fluidPage(
       # color picker
       colourInput("file2_color", "Choose the color for data", value = "red"),
       # Button
+      numericInput("bandwidth", "Bandwidth for density plot", value = 1000000, min = 1000, max = 100000000),
+      # contrast for alpha channel calculation
+      numericInput("contrast", "Contrast for alpha channel calculation", value = 2, min = 1, max = 10),
       actionButton("submit_data", "Add Annotation Data"),
       # Output: display error message
       verbatimTextOutput("error_message2"),
@@ -67,19 +77,11 @@ ui <- fluidPage(
       br(),
       dataTableOutput("uploaded_files_table"),
       actionButton("submit_selected", "Show only selected data"),
-    ),
-    wellPanel(
-      # specify bandwith - integer value in bp from 1000 to 100000000
-      # default is 1000000
-      numericInput("bandwidth", "Enter the bandwidth for density plot", value = 1000000, min = 1000, max = 100000000),
-      # contrast for alpha channel calculation
-      numericInput("contrast", "Enter the contrast for alpha channel calculation", value = 2, min = 1, max = 10),
-      actionButton("submit_bandwidth", "Update Bandwidth/Contrast")
     )
-           ),
-    column(10,
+    ),
+    column(9,
            mainPanel(
-             plotOutput("hist", width = "1000px", height = "1000px")
+             plotOutput("hist", width = "1600px", height = "1200px")
            )
     )
   )
@@ -108,12 +110,6 @@ server <- function(input, output) {
   df <- reactiveValues(
     df = NULL
   )
-
-  plot_params <- reactiveValues(
-    bandwidth = 1000000,
-    contrast = 2
-  )
-
 
   observeEvent(input$submit, {
     req(input$file1)
@@ -147,6 +143,8 @@ server <- function(input, output) {
                            color = input$file2_color,
                            label = input$file2_label,
                            selected = TRUE,
+                           bandwith = input$bandwidth,
+                           contrast = input$contrast,
                            stringsAsFactors = FALSE)
     uploaded_files_info$data <- rbind(uploaded_files_info$data, new_data)
     print(input$file2)
@@ -158,17 +156,21 @@ server <- function(input, output) {
     g <- keepSeqlevels(g, names(uploaded_data$chrom_sizes)[names(uploaded_data$chrom_sizes) %in% seqlevels(g)], pruning.mode='coarse')
     missing_seqlevels <- names(uploaded_data$chrom_sizes)[!names(uploaded_data$chrom_sizes) %in% seqlevels(g)]
     seqlevels(g) <- c(seqlevels(g), missing_seqlevels)
-    n = length(uploaded_data$gff_list) + 1
+    n <- length(uploaded_data$gff_list) + 1
     uploaded_data$gff_list[n] <- g
-    d <- get_density(g, uploaded_data$chrom_sizes[seqlevels(g)], tw = plot_params$bandwidth)
+    message("calculating density for", input$file2$name)
+    d <- get_density(g, uploaded_data$chrom_sizes[seqlevels(g)], tw = uploaded_files_info$data$bandwith[n])
     # remove zero coverage
     d <- d[d$coverage > 0,]
+    alpha_contrast <- uploaded_files_info$data$contrast[n]
     dd <- data.frame(seqnames = seqnames(d), start = start(d),
                      end = end(d),
                      value = d$coverage,
                      stringsAsFactors = FALSE,
-                     alpha = numToHex(d$coverage^(1/plot_params$contrast)),
-                     chr_index = match(seqnames(d),names(uploaded_data$chrom_sizes))
+                     alpha = numToHex(d$coverage^(1/alpha_contrast)),
+                     chr_index = match(seqnames(d),names(uploaded_data$chrom_sizes)),
+                     alpha_contrast = alpha_contrast,
+                     bw = uploaded_files_info$data$bandwith[n]
     )
     n <- length(uploaded_data$density_list) + 1
     uploaded_data$density_list[[n]] <- dd
@@ -177,11 +179,35 @@ server <- function(input, output) {
         # assume the histogram needs to be built from the second column
       plot_chromosomes(df$df)
       print(uploaded_data$density_list)
+      message("plotting")
       for (i in seq_along(uploaded_data$density_list)){
 
         if (!uploaded_files_info$data$selected[i]){
           next
         }
+        # check is bandwidth and contrast are the same, if not recalculate density_list
+
+        if (uploaded_data$density_list[[i]]$bw[1] != uploaded_files_info$data$bandwith[i] |
+            uploaded_data$density_list[[i]]$alpha_contrast[1] != uploaded_files_info$data$contrast[i]){
+          message("recalculating density for", uploaded_files_info$data$file[i])
+          g <- uploaded_data$gff_list[[i]]
+          d <- get_density(g, uploaded_data$chrom_sizes[seqlevels(g)], tw = uploaded_files_info$data$bandwith[i])
+          # remove zero coverage
+          d <- d[d$coverage > 0,]
+          alpha_contrast <- uploaded_files_info$data$contrast[i]
+          dd <- data.frame(seqnames = seqnames(d), start = start(d),
+                           end = end(d),
+                           value = d$coverage,
+                           stringsAsFactors = FALSE,
+                           alpha = numToHex(d$coverage^(1/alpha_contrast)),
+                           chr_index = match(seqnames(d),names(uploaded_data$chrom_sizes)),
+                           alpha_contrast = alpha_contrast,
+                           bw = uploaded_files_info$data$bandwith[i]
+          )
+          uploaded_data$density_list[[i]] <- dd
+        }
+
+
         col <- paste(uploaded_files_info$data$color[i], uploaded_data$density_list[[i]]$alpha, sep = "")
         rect(
           uploaded_data$density_list[[i]]$chr_index - 0.26,
@@ -191,6 +217,10 @@ server <- function(input, output) {
           col = col,
           border = NA)
       }
+      # add legend
+        legend("topright", legend = uploaded_files_info$data$label[uploaded_files_info$data$selected],
+                 fill = uploaded_files_info$data$color[uploaded_files_info$data$selected],
+                 bty = "n", cex = 1.5)
 
     })
 
@@ -215,31 +245,6 @@ server <- function(input, output) {
     print(uploaded_files_info$data)
   })
 
-
-  observeEvent(input$submit_bandwidth, {
-    req(input$bandwidth)
-    req(input$contrast)
-    plot_params$bandwidth <- input$bandwidth
-    plot_params$contrast <- input$contrast
-    # update data for ploting
-    print('update data for ploting')
-    for (i in seq_along(uploaded_data$density_list)){
-      print(i)
-      g <- uploaded_data$gff_list[[i]]
-      d <- get_density(g, uploaded_data$chrom_sizes[seqlevels(g)], tw = plot_params$bandwidth)
-      # remove zero coverage
-      d <- d[d$coverage > 0,]
-      dd <- data.frame(seqnames = seqnames(d), start = start(d),
-                       end = end(d),
-                       value = d$coverage,
-                       stringsAsFactors = FALSE,
-                       alpha = numToHex(d$coverage^(1/plot_params$contrast)),
-                       chr_index = match(seqnames(d),names(uploaded_data$chrom_sizes))
-      )
-      uploaded_data$density_list[[i]] <- dd
-    }
-  })
-
   output$uploaded_files_table <- renderDataTable({
     uploaded_files_info$data
   }, editable = TRUE)
@@ -251,7 +256,7 @@ plot_chromosomes <- function(g) {
   N <- nrow(g)
   # Create a blank plot with appropriate limits and labels
   M <- max(g$length)
-  plot(0, ylim = c(M,0), xlim = c(0, N), type = "n", xlab = "Chromosome Length", ylab
+  plot(0, ylim = c(M,0), xlim = c(0, N + 1), type = "n", ylab
     = "", axes = FALSE)
   # plot chromosomes as rectangles
   W <- 0.5
